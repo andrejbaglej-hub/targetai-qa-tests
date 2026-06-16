@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>target ai - web client sdk demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 15px;
+            text-align: left;
+        }
+        .controls {
+            margin: 10px 0;
+            text-align: left;
+        }
+        button {
+            padding: 8px 16px;
+            margin: 3px;
+            font-size: 14px;
+        }
+        input[type="text"] {
+            padding: 8px;
+            margin: 3px;
+            width: 300px;
+        }
+        input[type="checkbox"] {
+            margin: 0 5px 0 0;
+            vertical-align: middle;
+        }
+        #messages {
+            border: 1px solid #ccc;
+            height: 350px;
+            overflow-y: auto;
+            padding: 8px;
+            background: #f9f9f9;
+            white-space: pre-wrap;
+            text-align: left;
+        }
+        .status {
+            padding: 8px;
+            margin: 8px 0;
+            border-radius: 5px;
+            text-align: left;
+        }
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        h1 {
+            text-align: left;
+            margin: 15px 0 10px 0;
+        }
+        h3 {
+            text-align: left;
+            margin: 10px 0 5px 0;
+        }
+        label {
+            text-align: left;
+            display: inline-block;
+            margin: 3px 10px 3px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>target ai - web client sdk demo</h1>
+    
+    <div class="status disconnected" id="status">
+        Disconnected
+    </div>
+    
+    <div class="controls">
+        <h3>Configuration</h3>
+        <input type="text" id="serverUrl" placeholder="Runtime Server URL (e.g., http://localhost:8000)" value="https://app.targetai.ai">
+        <input type="text" id="tokenServerUrl" placeholder="Token Server URL (e.g., http://localhost:8001)" value="http://localhost:8001">
+        <br>
+        <input type="text" id="agentUuid" placeholder="Agent UUID" value="">
+        <br>
+        <label>
+            <input type="checkbox" id="enableText" checked> Text responses
+        </label>
+        <label>
+            <input type="checkbox" id="enableVoice" checked> Voice responses
+        </label>
+        <label>
+            <input type="checkbox" id="enableRawAudio"> Raw audio samples
+        </label>
+    </div>
+    
+    <div class="controls">
+        <h3>Call Controls</h3>
+        <button id="startCall" onclick="startCall()">Start Call</button>
+        <button id="stopCall" onclick="stopCall()" disabled>Stop Call</button>
+    </div>
+    
+    <div class="controls">
+        <h3>Send Message</h3>
+        <input type="text" id="messageInput" placeholder="Type a message..." disabled>
+        <button id="sendMessage" onclick="sendMessage()" disabled>Send</button>
+    </div>
+    
+    <div class="controls">
+        <h3>Audio Controls</h3>
+        <button id="muteBtn" onclick="toggleMicrophone()" disabled>Mute Mic</button>
+        <button id="speakerBtn" onclick="toggleSpeaker()" disabled>Mute Speaker</button>
+    </div>
+    
+    <h3>Messages</h3>
+    <div id="messages"></div>
+
+    <script type="module">
+        // Import the SDK
+        import { TargetAIWebClient } from '../dist/index.esm.js';
+        
+        let client = null;
+        let isMicMuted = false;
+        let isSpeakerMuted = false;
+        let audioLogCounter = 0;
+        const MAX_AUDIO_LOGS = 10;
+        
+        function logMessage(message) {
+            const messagesDiv = document.getElementById('messages');
+            const timestamp = new Date().toLocaleTimeString();
+            messagesDiv.textContent += `[${timestamp}] ${message}\n`;
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        function updateStatus(status, connected) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = status;
+            statusDiv.className = 'status ' + (connected ? 'connected' : 'disconnected');
+        }
+        
+        function updateControls(callActive) {
+            document.getElementById('startCall').disabled = callActive;
+            document.getElementById('stopCall').disabled = !callActive;
+            document.getElementById('messageInput').disabled = !callActive;
+            document.getElementById('sendMessage').disabled = !callActive;
+            document.getElementById('muteBtn').disabled = !callActive;
+            document.getElementById('speakerBtn').disabled = !callActive;
+        }
+        
+        async function startCall() {
+            try {
+                const serverUrl = document.getElementById('serverUrl').value.trim();
+                const tokenServerUrl = document.getElementById('tokenServerUrl').value.trim();
+                const agentUuid = document.getElementById('agentUuid').value.trim();
+                const enableText = document.getElementById('enableText').checked;
+                const enableVoice = document.getElementById('enableVoice').checked;
+                const enableRawAudio = document.getElementById('enableRawAudio').checked;
+                
+                if (!serverUrl || !agentUuid) {
+                    alert('Please enter runtime server URL and agent UUID');
+                    return;
+                }
+                
+                // Reset audio log counter
+                audioLogCounter = 0;
+                
+                // Create client if it doesn't exist or recreate if needed
+                if (client) {
+                    // Clean up existing client
+                    try {
+                        client.stopCall();
+                    } catch (e) {
+                        // Ignore errors during cleanup
+                    }
+                    client = null;
+                }
+                
+                client = new TargetAIWebClient({
+                    serverUrl: serverUrl,
+                    tokenServerUrl: tokenServerUrl
+                });
+                
+                // Setup event listeners
+                client.on('call_started', () => {
+                    logMessage('✓ Call started successfully');
+                    updateStatus('Connected', true);
+                    updateControls(true);
+                });
+                
+                client.on('call_ended', () => {
+                    logMessage('✓ Call ended');
+                    updateStatus('Disconnected', false);
+                    updateControls(false);
+                });
+                
+                client.on('agent_start_talking', () => {
+                    logMessage('🎤 Agent started talking');
+                });
+                
+                client.on('agent_stop_talking', () => {
+                    logMessage('🔇 Agent stopped talking');
+                });
+                
+                client.on('update', (message) => {
+                    logMessage(`📨 ${message.type}: ${message.content || JSON.stringify(message, null, 2)}`);
+                });
+                
+                client.on('connection_state_change', (state) => {
+                    logMessage(`🔗 Connection state: ${state}`);
+                });
+                
+                client.on('audio', (audioData) => {
+                    audioLogCounter++;
+                    if (audioLogCounter <= MAX_AUDIO_LOGS) {
+                        logMessage(`🎵 Received audio samples: ${audioData.length} samples`);
+                        if (audioLogCounter === MAX_AUDIO_LOGS) {
+                            logMessage(`🔇 Audio logging muted (received ${MAX_AUDIO_LOGS} samples, will not log further audio samples)`);
+                        }
+                    }
+                });
+                
+                client.on('error', (error) => {
+                    logMessage(`❌ Error: ${error.message}`);
+                    updateStatus('Error: ' + error.message, false);
+                    updateControls(false);
+                });
+                
+                // Determine allowed responses
+                const allowedResponses = [];
+                if (enableText) allowedResponses.push('text');
+                if (enableVoice) allowedResponses.push('voice');
+                
+                if (allowedResponses.length === 0) {
+                    alert('Please select at least one response type');
+                    return;
+                }
+                
+                logMessage('🔄 Starting call...');
+                updateStatus('Connecting...', false);
+                
+                await client.startCall({
+                    agentUuid: agentUuid,
+                    allowedResponses: allowedResponses,
+                    sampleRate: 24000,
+                    emitRawAudioSamples: enableRawAudio,
+                    dataInput: {
+                        test: 'browser_test',
+                        timestamp: new Date().toISOString()
+                    }
+                });
+                
+            } catch (error) {
+                logMessage(`❌ Failed to start call: ${error.message}`);
+                updateStatus('Error: ' + error.message, false);
+                updateControls(false);
+            }
+        }
+        
+        function stopCall() {
+            if (client) {
+                logMessage('🔄 Stopping call...');
+                try {
+                    client.stopCall();
+                } catch (error) {
+                    logMessage(`❌ Error stopping call: ${error.message}`);
+                    // Force update UI even if stop fails
+                    updateStatus('Disconnected', false);
+                    updateControls(false);
+                }
+            }
+        }
+        
+        function sendMessage() {
+            if (client) {
+                const messageInput = document.getElementById('messageInput');
+                const message = messageInput.value.trim();
+                
+                if (message) {
+                    const success = client.sendMessage(message);
+                    if (success) {
+                        logMessage(`📤 You: ${message}`);
+                        messageInput.value = '';
+                    } else {
+                        logMessage(`❌ Failed to send message: ${message}`);
+                    }
+                }
+            }
+        }
+        
+        function toggleMicrophone() {
+            if (client) {
+                isMicMuted = !isMicMuted;
+                client.setMicrophoneEnabled(!isMicMuted);
+                document.getElementById('muteBtn').textContent = isMicMuted ? 'Unmute Mic' : 'Mute Mic';
+                logMessage(`🎤 Microphone ${isMicMuted ? 'muted' : 'unmuted'}`);
+            }
+        }
+        
+        function toggleSpeaker() {
+            if (client) {
+                isSpeakerMuted = !isSpeakerMuted;
+                client.setSpeakerEnabled(!isSpeakerMuted);
+                document.getElementById('speakerBtn').textContent = isSpeakerMuted ? 'Unmute Speaker' : 'Mute Speaker';
+                logMessage(`🔊 Speaker ${isSpeakerMuted ? 'muted' : 'unmuted'}`);
+            }
+        }
+        
+        // Make functions global for onclick handlers
+        window.startCall = startCall;
+        window.stopCall = stopCall;
+        window.sendMessage = sendMessage;
+        window.toggleMicrophone = toggleMicrophone;
+        window.toggleSpeaker = toggleSpeaker;
+        
+        // Allow Enter key to send messages
+        document.getElementById('messageInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+        
+        // Initialize
+        logMessage('🚀 TargetAI Browser SDK Demo loaded');
+        logMessage('📋 Instructions:');
+        logMessage('1. Enter your runtime server URL (where /run/voice/offer endpoint is)');
+        logMessage('2. Enter your token server URL (where /token endpoint is)');
+        logMessage('3. Enter your agent UUID');
+        logMessage('4. Select response types (text/voice)');
+        logMessage('5. Click "Start Call" to begin');
+        logMessage('');
+        logMessage('🎯 Token Flow:');
+        logMessage('Browser → Token Server (/token) → Get Token');
+        logMessage('Browser → Runtime Server (/run/voice/offer) with Token → WebRTC');
+        logMessage('');
+        logMessage('💡 Usage tips:');
+        logMessage('- Use the message input to send text messages');
+        logMessage('- Monitor this log for events and responses');
+        logMessage('- Check browser console for detailed logs');
+        
+    </script>
+</body>
+</html> 
