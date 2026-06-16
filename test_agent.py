@@ -1,7 +1,7 @@
 """
 API-тесты агента TargetAI «Страны» (5849).
 
-ТЗ работодателя — стабильные воспроизводимые API-тесты (без Playwright):
+ТЗ:
 
   test_agent_transcribes_speech      → транскрибация речи
   test_agent_calls_japan_tool        → вызов инструмента
